@@ -2,6 +2,8 @@ package main
 
 import (
 	"finance1/internal/config"
+	"finance1/internal/lib/logger/sl"
+	"finance1/internal/storage"
 	"os"
 
 	"golang.org/x/exp/slog"
@@ -22,6 +24,12 @@ func main() {
 	log := setupLogger(cfg.Env)
 	log.Info("starting server")
 	log.Debug("debug logging enabled", slog.String("env", cfg.Env))
+
+	storage, err := storage.New(cfg.StoragePath)
+	if err != nil {
+		log.Error("error creating storage", sl.Err(err))
+		os.Exit(1)
+	}
 
 }
 
