@@ -1,17 +1,22 @@
 package main
 
 import (
+	"errors"
 	"finance1/internal/config"
+	"finance1/internal/http-server/handlers/url/save"
 	mwLogger "finance1/internal/http-server/middleware/logger"
 	"finance1/internal/http-server/middleware/logger/handlers/slogpretty"
+	"time"
 
 	"finance1/internal/lib/logger/sl"
 	"finance1/internal/storage"
+	"net/http"
 	"os"
+
+	"log/slog"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	"golang.org/x/exp/slog"
 )
 
 const (
@@ -20,54 +25,61 @@ const (
 	envProd  = "prod"
 )
 
-//TIP <p>To run your code, right-click the code and select <b>Run</b>.</p> <p>Alternatively, click
-// the <icon src="AllIcons.Actions.Execute"/> icon in the gutter and select the <b>Run</b> menu item from here.</p>
-
 func main() {
-
 	cfg := config.MustLoad()
-	log := setupLogger(cfg.Env)
-	log.Info("starting server")
-	log.Debug("debug logging enabled", slog.String("env", cfg.Env))
 
-	storage, err := storage.New(cfg.StoragePath)
+	log := setupLogger(cfg.Env)
+	log.Info("starting server", slog.String("env", cfg.Env))
+
+	st, err := storage.New(cfg.StoragePath)
 	if err != nil {
 		log.Error("error creating storage", sl.Err(err))
 		os.Exit(1)
 	}
 
-	router := chi.NewRouter()
-	//middleware
-	router.Use(middleware.RequestID)
-	router.Use(middleware.Logger)
-	router.Use(mwLogger.New(log))
+	r := chi.NewRouter()
 
-	router.Use(middleware.Recoverer)
-	router.Use(middleware.URLFormat)
-	_ = storage
+	// middlewares
+	r.Use(middleware.RequestID)
+	r.Use(middleware.RealIP)
+	r.Use(middleware.Recoverer)
+	r.Use(middleware.URLFormat)
+
+	// стандартный chi-логгер обычно не нужен, если ты ставишь свой
+	r.Use(mwLogger.New(log))
+
+	r.Post("/url", save.New(log, st))
+
+	addr := cfg.HTTPServer.Address
+	log.Info("starting http server", slog.String("addr", addr))
+
+	srv := &http.Server{
+		Addr:         addr,
+		Handler:      r,
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+
+	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Error("http server stopped", sl.Err(err))
+		os.Exit(1)
+	}
 
 }
 
 func setupLogger(env string) *slog.Logger {
-	var log *slog.Logger
 	switch env {
 	case envLocal:
-		log = setupPrettySlog()
+		return setupPrettySlog()
 	case evnDev:
-		//	log = setupPrettySlog()
-		log = slog.New(
-			slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}),
-		)
-
+		return slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	case envProd:
-		log = slog.New(
-			slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}),
-		)
-
+		return slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	default:
+		// чтоб не получить nil-логгер и потом весело паниковать
+		return slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	}
-
-	return log
-
 }
 
 func setupPrettySlog() *slog.Logger {
@@ -78,6 +90,5 @@ func setupPrettySlog() *slog.Logger {
 	}
 
 	handler := opts.NewPrettyHandler(os.Stdout)
-
 	return slog.New(handler)
 }

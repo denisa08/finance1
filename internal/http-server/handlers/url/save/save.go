@@ -1,9 +1,10 @@
 package save
 
 import (
+	"errors"
 	resp "finance1/internal/lib/api/response"
-	"finance1/internal/lib/logger/sl"
 	"finance1/internal/lib/random"
+	"finance1/internal/storage"
 	"log/slog"
 	"net/http"
 
@@ -29,31 +30,32 @@ type URLSaver interface {
 // TODO move to conf
 const aliasLength = 6
 
+var validate = validator.New()
+
 func New(log *slog.Logger, urlSaver URLSaver) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		const op = "handlers.url.save.New"
 
-		log = log.With(
+		log := log.With(
 			slog.String("op", op),
 			slog.String("request_id", middleware.GetReqID(r.Context())),
 		)
-		var req Request
-		err := render.DecodeJSON(r.Body, &req)
-		if err != nil {
-			log.Error("failed to decode request", sl.Err(err))
 
+		var req Request
+		if err := render.DecodeJSON(r.Body, &req); err != nil {
+			log.Error("failed to decode request", slog.Any("err", err))
 			render.JSON(w, r, resp.Error("failed to decode request"))
 			return
 		}
-		log.Info("request body encoded", slog.Any("request", req))
-		if err := validator.New().Struct(req); err != nil {
-			validateErr := err.(validator.ValidationErrors)
 
-			log.Error("invalid request", sl.Err(err))
-
+		if err := validate.Struct(req); err != nil {
+			var ve validator.ValidationErrors
+			if errors.As(err, &ve) {
+				render.JSON(w, r, resp.ValidationError(ve))
+				return
+			}
+			log.Error("validator error", slog.Any("err", err))
 			render.JSON(w, r, resp.Error("invalid request"))
-			render.JSON(w, r, resp.ValidationError(validateErr))
-
 			return
 		}
 
@@ -62,5 +64,27 @@ func New(log *slog.Logger, urlSaver URLSaver) http.HandlerFunc {
 			alias = random.NewRandomString(aliasLength)
 		}
 
+		id, err := urlSaver.SaveURL(req.URL, alias)
+		if err != nil {
+			if errors.Is(err, storage.ErrURLExists) {
+				log.Info("url already exists", slog.String("url", req.URL))
+				render.JSON(w, r, resp.Error("url already exists"))
+				return
+			}
+
+			log.Error("failed to add url", slog.Any("err", err))
+			render.JSON(w, r, resp.Error("failed to add url"))
+			return
+		}
+
+		log.Info("url added", slog.Int64("id", id))
+		responseOK(w, r, alias)
 	}
+}
+
+func responseOK(w http.ResponseWriter, r *http.Request, alias string) {
+	render.JSON(w, r, Response{
+		Response: resp.OK(),
+		Alias:    alias,
+	})
 }

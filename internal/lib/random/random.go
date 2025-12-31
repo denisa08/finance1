@@ -1,13 +1,21 @@
 package random
 
-import "golang.org/x/exp/rand"
+import (
+	"time"
 
-// todo разобраться что тут
-func NewRandomString(n int) string {
-	const letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-	b := make([]byte, n)
+	"golang.org/x/exp/rand"
+)
+
+var rnd = rand.New(
+	rand.NewSource(uint64(time.Now().UnixNano())),
+)
+
+func NewRandomString(size int) string {
+	const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+
+	b := make([]byte, size)
 	for i := range b {
-		b[i] = letters[rand.Intn(len(letters))]
+		b[i] = chars[rnd.Intn(len(chars))]
 	}
 	return string(b)
 }
