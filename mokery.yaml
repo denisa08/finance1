@@ -1,0 +1,15 @@
+# .mockery.yml (в корне рядом с go.mod)
+
+template: testify
+formatter: goimports
+force-file-write: true
+
+# куда складывать моки
+dir: "mocks/{{.SrcPackagePath}}"
+filename: "mock_{{.InterfaceName}}.go"
+pkgname: "mocks"
+
+packages:
+  finance1/internal/http-server/handlers/redirect:
+    interfaces:
+      URLGetter: {}

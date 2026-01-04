@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"finance1/internal/config"
+	"finance1/internal/http-server/handlers/redirect"
 	"finance1/internal/http-server/handlers/url/save"
 	mwLogger "finance1/internal/http-server/middleware/logger"
 	"finance1/internal/http-server/middleware/logger/handlers/slogpretty"
@@ -31,31 +32,38 @@ func main() {
 	log := setupLogger(cfg.Env)
 	log.Info("starting server", slog.String("env", cfg.Env))
 
-	st, err := storage.New(cfg.StoragePath)
+	storage, err := storage.New(cfg.StoragePath)
 	if err != nil {
 		log.Error("error creating storage", sl.Err(err))
 		os.Exit(1)
 	}
 
-	r := chi.NewRouter()
+	router := chi.NewRouter()
 
 	// middlewares
-	r.Use(middleware.RequestID)
-	r.Use(middleware.RealIP)
-	r.Use(middleware.Recoverer)
-	r.Use(middleware.URLFormat)
+	router.Use(middleware.RequestID)
+	router.Use(middleware.RealIP)
+	router.Use(middleware.Recoverer)
+	router.Use(mwLogger.New(log))
+	router.Use(middleware.URLFormat)
+	router.Route("/url", func(r chi.Router) {
+		r.Use(middleware.BasicAuth("url-shortener", map[string]string{
+			cfg.HTTPServer.User: cfg.HTTPServer.Password,
+		}))
 
-	// стандартный chi-логгер обычно не нужен, если ты ставишь свой
-	r.Use(mwLogger.New(log))
+		r.Post("/", save.New(log, storage))
 
-	r.Post("/url", save.New(log, st))
+	})
+
+	router.Get("/{alias}", redirect.New(log, storage))
+	//router.Delete("/{alias}", redirect.New(log, storage))
 
 	addr := cfg.HTTPServer.Address
 	log.Info("starting http server", slog.String("addr", addr))
 
 	srv := &http.Server{
 		Addr:         addr,
-		Handler:      r,
+		Handler:      router,
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  60 * time.Second,
